@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>Buy {{ item.name }}</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Arial, sans-serif; padding: 32px; }
+      .card { max-width: 520px; border: 1px solid #eee; border-radius: 12px; padding: 24px; }
+      .price { font-size: 22px; margin: 8px 0 16px; }
+      button { padding: 10px 16px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; }
+      button:hover { opacity: .9; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>{{ item.name }}</h1>
+      {% if item.description %}<p>{{ item.description }}</p>{% endif %}
+      <div class="price">{{ item.currency|upper }} {{ display_price }}</div>
+
+      <button id="buy-button">Buy</button>
+    </div>
+
+    <script>
+      const stripe = Stripe("{{ STRIPE_PUBLISHABLE_KEY }}");
+      document.getElementById("buy-button").addEventListener("click", async () => {
+        try {
+          const res = await fetch("{% url 'buy-item' item.id %}");
+          if (!res.ok) throw new Error("Server error");
+          const data = await res.json();
+          const { error } = await stripe.redirectToCheckout({ sessionId: data.id });
+          if (error) alert(error.message);
+        } catch (e) {
+          alert(e.message || "Something went wrong");
+        }
+      });
+    </script>
+  </body>
+</html>
