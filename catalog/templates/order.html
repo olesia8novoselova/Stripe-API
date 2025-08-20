@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>Order #{{ order.id }}</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Arial, sans-serif; padding: 32px; }
+      .card { max-width: 720px; border: 1px solid #eee; border-radius: 12px; padding: 24px; }
+      table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+      th, td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; text-align: left; }
+      .total { font-weight: 600; text-align: right; margin-top: 8px; }
+      button { padding: 10px 16px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; }
+      button:hover { opacity: .9; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Order #{{ order.id }}</h1>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Currency</th><th>Price</th></tr>
+        </thead>
+        <tbody>
+          {% for it in items %}
+            <tr>
+              <td>{{ it.name }}</td>
+              <td>{{ it.currency|upper }}</td>
+              <td>{{ it.display_price }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="3">No items in order</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="total">
+        Total: {{ order.currency|upper }} {{ total_display }}
+      </div>
+      <button id="buy-order">Pay Order</button>
+    </div>
+
+    <script>
+      const stripe = Stripe("{{ STRIPE_PUBLISHABLE_KEY }}");
+      document.getElementById("buy-order").addEventListener("click", async () => {
+        try {
+          const res = await fetch("{% url 'buy-order' order.id %}");
+          if (!res.ok) throw new Error("Server error");
+          const data = await res.json();
+          const { error } = await stripe.redirectToCheckout({ sessionId: data.id });
+          if (error) alert(error.message);
+        } catch (e) {
+          alert(e.message || "Something went wrong");
+        }
+      });
+    </script>
+  </body>
+</html>
