@@ -9,14 +9,19 @@
       .card { max-width: 720px; border: 1px solid #eee; border-radius: 12px; padding: 24px; }
       table { width: 100%; border-collapse: collapse; margin: 16px 0; }
       th, td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; text-align: left; }
-      .total { font-weight: 600; text-align: right; margin-top: 8px; }
-      button { padding: 10px 16px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; }
+      .summary { margin-top: 12px; }
+      .row { display: flex; justify-content: space-between; padding: 4px 0; }
+      .muted { color:#666 }
+      .total { font-weight: 700; font-size: 18px; }
+      button { margin-top: 16px; padding: 10px 16px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; }
       button:hover { opacity: .9; }
+      .paid { color: green; font-weight: 600; }
     </style>
   </head>
   <body>
     <div class="card">
-      <h1>Order #{{ order.id }}</h1>
+      <h1>Order #{{ order.id }} {% if order.paid %}<span class="paid">PAID</span>{% endif %}</h1>
+
       <table>
         <thead>
           <tr><th>Name</th><th>Currency</th><th>Price</th></tr>
@@ -29,21 +34,29 @@
               <td>{{ it.display_price }}</td>
             </tr>
           {% empty %}
-            <tr><td colspan="3">No items in order</td></tr>
+            <tr><td colspan="3" class="muted">No items in order</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <div class="total">
-        Total: {{ order.currency|upper }} {{ total_display }}
+      <div class="summary">
+        <div class="row"><span>Subtotal</span><span>{{ currency }} {{ subtotal_display }}</span></div>
+        {% if has_discount %}
+          <div class="row">
+            <span>Discount ({{ discount_name }} –{{ discount_percent }}%)</span>
+            <span>− {{ currency }} {{ discount_amount_display }}</span>
+          </div>
+        {% endif %}
+        <div class="row total"><span>Total</span><span>{{ currency }} {{ total_display }}</span></div>
       </div>
-      <button id="buy-order">Pay Order</button>
+
+      <button id="buy-order">Buy</button>
     </div>
 
     <script>
       const stripe = Stripe("{{ STRIPE_PUBLISHABLE_KEY }}");
       document.getElementById("buy-order").addEventListener("click", async () => {
         try {
-          const res = await fetch("{% url 'buy-order' order.id %}");
+          const res = await fetch("{% url 'buy-order' order_id=order.id %}");
           if (!res.ok) throw new Error("Server error");
           const data = await res.json();
           const { error } = await stripe.redirectToCheckout({ sessionId: data.id });

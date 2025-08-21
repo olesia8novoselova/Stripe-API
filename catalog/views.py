@@ -2,13 +2,16 @@ from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import render, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
+from django.views.decorators.http import require_GET
 import logging
+from decimal import Decimal, ROUND_HALF_UP
 
 from .models import Item, CheckoutSession, Order, OrderPayment
 from .services.stripe_api import create_checkout_session_for_item, create_checkout_session_for_order
 
 log = logging.getLogger(__name__)
 
+@require_GET
 def item_page(request, id: int):
     item = get_object_or_404(Item, id=id)
     display_price = item.price / 100
@@ -18,38 +21,56 @@ def item_page(request, id: int):
         "STRIPE_PUBLISHABLE_KEY": settings.STRIPE_PUBLISHABLE_KEY,
     })
 
+@require_GET
 def buy_item(request, id: int):
-    if request.method != "GET":
-        return HttpResponseBadRequest("GET only")
     item = get_object_or_404(Item, id=id)
     session = create_checkout_session_for_item(item)
     CheckoutSession.objects.create(item=item, session_id=session.id)
     return JsonResponse({"id": session.id})
 
-def order_page(request, id: int):
-    order = get_object_or_404(Order, id=id)
+@require_GET
+def order_page(request, order_id: int):
+    order = get_object_or_404(Order, id=order_id)
     items = list(order.items.all())
-    total = order.total_amount / 100
-    return render(request, "order.html", {
+
+    subtotal_cents = sum(i.price for i in items)
+    percent = order.discount.percent_off if (order.discount and order.discount.active) else 0
+
+    discount_cents = int(
+        (Decimal(subtotal_cents) * Decimal(percent) / Decimal(100))
+        .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
+    total_cents = subtotal_cents - discount_cents
+
+    def fmt(cents: int) -> str:
+        return f"{cents / 100:.2f}"
+
+    context = {
         "order": order,
         "items": items,
-        "total_display": f"{total:.2f}",
+        "currency": order.currency.upper(),
+        "subtotal_display": fmt(subtotal_cents),
+        "has_discount": percent > 0,
+        "discount_name": order.discount.name if percent > 0 else "",
+        "discount_percent": percent,
+        "discount_amount_display": fmt(discount_cents),
+        "total_display": fmt(total_cents),
         "STRIPE_PUBLISHABLE_KEY": settings.STRIPE_PUBLISHABLE_KEY,
-    })
+    }
+    return render(request, "order.html", context)
 
-def buy_order(request, id: int):
-    order = get_object_or_404(Order, id=id)
+@require_GET
+def buy_order(request, order_id: int):
+    order = get_object_or_404(Order, id=order_id)
     if order.items.count() == 0:
         return JsonResponse({"error": "Order has no items"}, status=400)
     try:
         session = create_checkout_session_for_order(order)
     except Exception as e:
-        log.exception("Ошибка создания сессии Stripe (заказ)")
+        log.exception("Stripe session create failed (order_id=%s)", order_id)
         return JsonResponse({"error": str(e)}, status=500)
 
-    # сохраняем связь session с order
     OrderPayment.objects.create(order=order, session_id=session.id)
-
     return JsonResponse({"id": session.id})
 
 # Stripe Webhook для подтверждения оплаты с проверкой подписи

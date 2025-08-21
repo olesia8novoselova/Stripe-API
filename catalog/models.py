@@ -25,6 +25,18 @@ class CheckoutSession(models.Model):
     def __str__(self):
         status = "PAID" if self.paid else "UNPAID"
         return f"{self.session_id} -> {self.item.name} [{status}]"
+    
+# модель для хранения скидок
+class Discount(models.Model):
+    name = models.CharField(max_length=100)
+    percent_off = models.PositiveIntegerField(help_text="Скидка в %")
+    active = models.BooleanField(default=True)
+    stripe_coupon_id = models.CharField(max_length=64, blank=True, default="")
+
+    def __str__(self):
+        st = "ACTIVE" if self.active else "INACTIVE"
+        return f"{self.name} (-{self.percent_off}% | {st})"
+
 
 # корзина из нескольких товаров одной валюты
 class Order(models.Model):
@@ -32,6 +44,8 @@ class Order(models.Model):
     currency = models.CharField(max_length=3, default="usd")
     created_at = models.DateTimeField(auto_now_add=True)
     paid = models.BooleanField(default=False)
+
+    discount = models.ForeignKey(Discount, null=True, blank=True, on_delete=models.SET_NULL, related_name="orders")
 
     @property
     def total_amount(self) -> int:
@@ -51,3 +65,4 @@ class OrderPayment(models.Model):
     def __str__(self):
         status = "PAID" if self.paid else "UNPAID"
         return f"{self.session_id} -> Order #{self.order_id} [{status}]"
+
