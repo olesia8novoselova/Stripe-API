@@ -33,14 +33,44 @@ def order_page(request, order_id: int):
     order = get_object_or_404(Order, id=order_id)
     items = list(order.items.all())
 
+    # сумма позиций
     subtotal_cents = sum(i.price for i in items)
+
+    # скидка на заказ
     percent = order.discount.percent_off if (order.discount and order.discount.active) else 0
 
     discount_cents = int(
         (Decimal(subtotal_cents) * Decimal(percent) / Decimal(100))
         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
-    total_cents = subtotal_cents - discount_cents
+
+    # база для налогообложения (скидка уменьшает налоговую базу)
+    taxable_base_cents = subtotal_cents - discount_cents
+
+    taxes_ctx = []
+    exclusive_total_cents = 0
+    for t in order.taxes.filter(active=True):
+        rate = Decimal(t.percentage)
+        if t.inclusive:
+            # из суммы выделяем налоговую часть
+            tax_amount = (Decimal(taxable_base_cents) * rate / (Decimal(100) + rate)) \
+                         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            tax_amount = int(tax_amount)
+        else:
+            # начисляемый сверху налог
+            tax_amount = (Decimal(taxable_base_cents) * rate / Decimal(100)) \
+                         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            tax_amount = int(tax_amount)
+            exclusive_total_cents += tax_amount
+
+        taxes_ctx.append({
+            "name": t.display_name,
+            "rate": f"{t.percentage}",
+            "inclusive": t.inclusive,
+            "amount_cents": tax_amount,
+        })
+
+    total_cents = taxable_base_cents + exclusive_total_cents
 
     def fmt(cents: int) -> str:
         return f"{cents / 100:.2f}"
@@ -49,11 +79,23 @@ def order_page(request, order_id: int):
         "order": order,
         "items": items,
         "currency": order.currency.upper(),
+
         "subtotal_display": fmt(subtotal_cents),
         "has_discount": percent > 0,
         "discount_name": order.discount.name if percent > 0 else "",
         "discount_percent": percent,
         "discount_amount_display": fmt(discount_cents),
+
+        "taxes": [
+            {
+                "name": tx["name"],
+                "rate": tx["rate"],
+                "inclusive": tx["inclusive"],
+                "amount_display": fmt(tx["amount_cents"]),
+            } for tx in taxes_ctx
+        ],
+        "has_taxes": bool(taxes_ctx),
+
         "total_display": fmt(total_cents),
         "STRIPE_PUBLISHABLE_KEY": settings.STRIPE_PUBLISHABLE_KEY,
     }

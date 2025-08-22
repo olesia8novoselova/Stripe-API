@@ -37,6 +37,18 @@ class Discount(models.Model):
         st = "ACTIVE" if self.active else "INACTIVE"
         return f"{self.name} (-{self.percent_off}% | {st})"
 
+# модель для хранения налогов
+class Tax(models.Model):
+    display_name = models.CharField(max_length=50, help_text="Название, напр. НДС")
+    percentage = models.DecimalField(max_digits=5, decimal_places=2, help_text="Процент, напр. 20.00")
+    inclusive = models.BooleanField(default=False, help_text="Включён в цену (True) или сверху (False)")
+    active = models.BooleanField(default=True)
+    stripe_tax_rate_id = models.CharField(max_length=64, blank=True, default="")
+
+    def __str__(self):
+        mode = "incl" if self.inclusive else "excl"
+        st = "ACTIVE" if self.active else "INACTIVE"
+        return f"{self.display_name} {self.percentage}% ({mode}, {st})"
 
 # корзина из нескольких товаров одной валюты
 class Order(models.Model):
@@ -46,6 +58,7 @@ class Order(models.Model):
     paid = models.BooleanField(default=False)
 
     discount = models.ForeignKey(Discount, null=True, blank=True, on_delete=models.SET_NULL, related_name="orders")
+    taxes = models.ManyToManyField(Tax, blank=True, related_name="orders")
 
     @property
     def total_amount(self) -> int:

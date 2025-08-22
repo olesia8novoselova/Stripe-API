@@ -1,7 +1,6 @@
 import stripe
 from django.conf import settings
-from ..models import Discount
-
+from ..models import Discount, Tax
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 def _product_data_for_item(item):
@@ -39,6 +38,9 @@ def create_checkout_session_for_order(order):
 
     currency = next(iter(currencies))
 
+    # подготовим список tax_rate ids (только активные)
+    tax_rate_ids = [ensure_stripe_tax_rate(t) for t in order.taxes.filter(active=True)]
+
     line_items = [{
         "price_data": {
             "currency": currency,
@@ -46,6 +48,7 @@ def create_checkout_session_for_order(order):
             "unit_amount": int(item.price),
         },
         "quantity": 1,
+        **({"tax_rates": tax_rate_ids} if tax_rate_ids else {}),
     } for item in items_qs]
 
     params = dict(
@@ -79,3 +82,19 @@ def ensure_stripe_coupon(discount: Discount) -> str:
     discount.stripe_coupon_id = coupon.id
     discount.save(update_fields=["stripe_coupon_id"])
     return coupon.id
+
+# гарантируем наличие TaxRate в Stripe и возвращаем его id
+def ensure_stripe_tax_rate(tax: Tax) -> str:
+    if tax.stripe_tax_rate_id and tax.active:
+        return tax.stripe_tax_rate_id
+
+    txr = stripe.TaxRate.create(
+        display_name=tax.display_name,
+        percentage=float(tax.percentage),
+        inclusive=bool(tax.inclusive),
+        active=True,
+    )
+    tax.stripe_tax_rate_id = txr.id
+    tax.active = True
+    tax.save(update_fields=["stripe_tax_rate_id", "active"])
+    return txr.id

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Item, CheckoutSession, Order, OrderPayment, Discount
+from .models import Item, CheckoutSession, Order, OrderPayment, Discount, Tax
 
 @admin.register(Item)
 class ItemAdmin(admin.ModelAdmin):
@@ -17,7 +17,7 @@ class CheckoutSessionAdmin(admin.ModelAdmin):
 class OrderAdmin(admin.ModelAdmin):
     list_display = ("id", "paid", "currency", "created_at", "total_amount_display", "discount")
     list_filter = ("paid", "currency", "discount")
-    filter_horizontal = ("items",)
+    filter_horizontal = ("items", "taxes")
 
     def total_amount_display(self, obj):
         return f"{obj.currency.upper()} {obj.total_amount/100:.2f}"
@@ -34,3 +34,9 @@ class DiscountAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "percent_off", "active", "stripe_coupon_id")
     list_filter = ("active",)
     search_fields = ("name", "stripe_coupon_id")
+
+@admin.register(Tax)
+class TaxAdmin(admin.ModelAdmin):
+    list_display = ("id", "display_name", "percentage", "inclusive", "active", "stripe_tax_rate_id")
+    list_filter = ("active", "inclusive")
+    search_fields = ("display_name", "stripe_tax_rate_id")
