@@ -79,10 +79,49 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Stripe
-STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_placeholder')
-STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_placeholder')
-DEFAULT_CURRENCY = env('DEFAULT_CURRENCY')
+# Stripe (мультивалюта)
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='')  # legacy (не обязателен)
+STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='')  # legacy (не обязателен)
+
+# основная валюта по умолчанию
+DEFAULT_CURRENCY = env('DEFAULT_CURRENCY').lower()
+
+# пары ключей по валютам
+STRIPE_KEYS = {
+    'usd': {
+        'secret': env('STRIPE_SECRET_KEY_USD', default=''),
+        'publishable': env('STRIPE_PUBLISHABLE_KEY_USD', default=''),
+    },
+    'eur': {
+        'secret': env('STRIPE_SECRET_KEY_EUR', default=''),
+        'publishable': env('STRIPE_PUBLISHABLE_KEY_EUR', default=''),
+    },
+}
+
+# вернёт секретный ключ Stripe для заданной валюты
+def get_stripe_secret_for(currency: str) -> str:
+    cur = (currency or DEFAULT_CURRENCY).lower()
+    pair = STRIPE_KEYS.get(cur) or STRIPE_KEYS.get(DEFAULT_CURRENCY, {})
+    secret = (pair or {}).get('secret', '')
+    if not secret:
+        # fallback на legacy ключ (если он задан единственный)
+        if STRIPE_SECRET_KEY:
+            return STRIPE_SECRET_KEY
+        raise RuntimeError(f"Не удалось получить Stripe secret key для валюты '{cur}'")
+    return secret
+
+# вернёт публичный ключ Stripe для заданной валюты
+def get_stripe_publishable_for(currency: str) -> str:
+    cur = (currency or DEFAULT_CURRENCY).lower()
+    pair = STRIPE_KEYS.get(cur) or STRIPE_KEYS.get(DEFAULT_CURRENCY, {})
+    pk = (pair or {}).get('publishable', '')
+    if not pk:
+        # fallback на legacy ключ (если он задан единственный)
+        if STRIPE_PUBLISHABLE_KEY:
+            return STRIPE_PUBLISHABLE_KEY
+        raise RuntimeError(f"Не удалось получить Stripe publishable key для валюты '{cur}'")
+    return pk
+
 SUCCESS_URL = env('SUCCESS_URL', default='http://localhost:8000/success/')
 CANCEL_URL = env('CANCEL_URL', default='http://localhost:8000/cancel/')
-STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')

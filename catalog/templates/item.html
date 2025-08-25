@@ -23,15 +23,41 @@
 
     <script>
       const stripe = Stripe("{{ STRIPE_PUBLISHABLE_KEY }}");
+
+      const note = document.createElement('div');
+      note.id = 'note';
+      note.style.marginTop = '12px';
+      note.style.color = '#b00020';
+      note.style.fontWeight = '500';
+      document.querySelector('.card').appendChild(note);
+      function notify(msg) { note.textContent = msg || ''; }
+
+      async function fetchJSON(url) {
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch {}
+        return { res, data, text };
+      }
+
       document.getElementById("buy-button").addEventListener("click", async () => {
+        notify('');
         try {
-          const res = await fetch("{% url 'buy-item' item.id %}");
-          if (!res.ok) throw new Error("Server error");
-          const data = await res.json();
+          const { res, data, text } = await fetchJSON("{% url 'buy-item' item.id %}");
+          if (!res.ok) {
+            const msg = (data && data.error) || text || `HTTP ${res.status}`;
+            console.error("Ошибка оформления заказа:", { status: res.status, data, raw: text });
+            notify(msg);
+            return;
+          }
           const { error } = await stripe.redirectToCheckout({ sessionId: data.id });
-          if (error) alert(error.message);
+          if (error) {
+            console.error("Ошибка Stripe:", error);
+            notify(error.message);
+          }
         } catch (e) {
-          alert(e.message || "Something went wrong");
+          console.error(e);
+          notify(e.message || "Неизвестная ошибка");
         }
       });
     </script>

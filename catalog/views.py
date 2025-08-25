@@ -5,6 +5,7 @@ from django.conf import settings
 from django.views.decorators.http import require_GET
 import logging
 from decimal import Decimal, ROUND_HALF_UP
+import stripe
 
 from .models import Item, CheckoutSession, Order, OrderPayment
 from .services.stripe_api import create_checkout_session_for_item, create_checkout_session_for_order
@@ -24,7 +25,19 @@ def item_page(request, id: int):
 @require_GET
 def buy_item(request, id: int):
     item = get_object_or_404(Item, id=id)
-    session = create_checkout_session_for_item(item)
+    try:
+        session = create_checkout_session_for_item(item)
+    except ValueError as e:
+        # предвалидации
+        return JsonResponse({"error": str(e)}, status=400)
+    except stripe.error.StripeError as e:
+        # ошибки, которые вернул Stripe
+        msg = getattr(e, "user_message", None) or str(e)
+        return JsonResponse({"error": msg}, status=400)
+    except Exception as e:
+        log.exception("Ошибка buy_item(id=%s)", id)
+        return JsonResponse({"error": f"Unexpected: {e}"}, status=500)
+
     CheckoutSession.objects.create(item=item, session_id=session.id)
     return JsonResponse({"id": session.id})
 
@@ -105,12 +118,19 @@ def order_page(request, order_id: int):
 def buy_order(request, order_id: int):
     order = get_object_or_404(Order, id=order_id)
     if order.items.count() == 0:
-        return JsonResponse({"error": "Order has no items"}, status=400)
+        return JsonResponse({"error": "Заказ пуст"}, status=400)
     try:
         session = create_checkout_session_for_order(order)
+    except ValueError as e:
+        # предвалидации (минимальная сумма, смешанные валюты и т.д.)
+        return JsonResponse({"error": str(e)}, status=400)
+    except stripe.error.StripeError as e:
+        # ошибки от Stripe с понятным текстом
+        msg = getattr(e, "user_message", None) or str(e)
+        return JsonResponse({"error": msg}, status=400)
     except Exception as e:
-        log.exception("Stripe session create failed (order_id=%s)", order_id)
-        return JsonResponse({"error": str(e)}, status=500)
+        log.exception("Ошибка создания сессии Stripe (order_id=%s)", order_id)
+        return JsonResponse({"error": f"Unexpected: {e}"}, status=500)
 
     OrderPayment.objects.create(order=order, session_id=session.id)
     return JsonResponse({"id": session.id})

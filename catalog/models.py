@@ -4,7 +4,7 @@ class Item(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     price = models.PositiveIntegerField(help_text="Цена в минимальных единицах")
-    currency = models.CharField(max_length=3, default='usd')
+    currency = models.CharField(max_length=3, default='usd', help_text="USD, EUR, ...")
 
     def __str__(self):
         major = self.price / 100
