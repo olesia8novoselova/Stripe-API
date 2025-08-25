@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>Pay (Intent) — {{ item.name }}</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Arial, sans-serif; padding: 32px; }
+      .card { max-width: 520px; border: 1px solid #eee; border-radius: 12px; padding: 24px; }
+      .price { font-size: 22px; margin: 8px 0 16px; }
+      #card-element { padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; }
+      button { margin-top: 14px; padding: 10px 16px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; }
+      .note { margin-top: 12px; color: #b00020; font-weight: 500; min-height: 1.2em; }
+      .ok { color: #0a7c2f; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>{{ item.name }}</h1>
+      {% if item.description %}<p>{{ item.description }}</p>{% endif %}
+      <div class="price">{{ item.currency|upper }} {{ display_price }}</div>
+
+      <div id="card-element"></div>
+      <button id="pay">Buy</button>
+      <div id="note" class="note"></div>
+    </div>
+
+    <script>
+      const stripe = Stripe("{{ STRIPE_PUBLISHABLE_KEY }}");
+      const elements = stripe.elements();
+      const card = elements.create('card');
+      card.mount('#card-element');
+
+      const note = document.getElementById('note');
+      const notify = (msg, ok=false) => { note.textContent = msg || ''; note.classList.toggle('ok', !!ok); };
+
+      async function fetchJSON(url) {
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch {}
+        return { res, data, text };
+      }
+
+      document.getElementById('pay').addEventListener('click', async () => {
+        notify('');
+        try {
+          const { res, data, text } = await fetchJSON("{% url 'buy-item-intent' item.id %}");
+          if (!res.ok) {
+            const msg = (data && data.error) || text || `HTTP ${res.status}`;
+            console.error('PI create error', msg);
+            notify(msg);
+            return;
+          }
+
+          const { client_secret } = data;
+          const result = await stripe.confirmCardPayment(client_secret, {
+            payment_method: { card }
+          });
+
+          if (result.error) {
+            console.error('PI confirm error', result.error);
+            notify(result.error.message || 'Оплата не удалась');
+          } else if (result.paymentIntent && result.paymentIntent.status === 'succeeded') {
+            notify('Оплата прошла успешно!', true);
+          } else {
+            notify(`Status: ${result.paymentIntent && result.paymentIntent.status}`);
+          }
+        } catch (e) {
+          console.error(e);
+          notify(e.message || 'Неизвестная ошибка');
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -9,6 +9,8 @@ import stripe
 
 from .models import Item, CheckoutSession, Order, OrderPayment
 from .services.stripe_api import create_checkout_session_for_item, create_checkout_session_for_order
+from .services.stripe_api import create_payment_intent_for_item, create_payment_intent_for_order
+
 
 log = logging.getLogger(__name__)
 
@@ -209,3 +211,109 @@ def stripe_webhook(request):
                 log.info("Заказ %s отмечен как PAID через сессию %s", op.order_id, session_id)
         except OrderPayment.DoesNotExist:
             pass
+
+@require_GET
+def item_intent_page(request, id: int):
+    item = get_object_or_404(Item, id=id)
+    display_price = item.price / 100
+    pubkey = _publishable_for_currency(item.currency)
+    return render(request, "item_intent.html", {
+        "item": item,
+        "display_price": f"{display_price:.2f}",
+        "STRIPE_PUBLISHABLE_KEY": pubkey,
+    })
+
+@require_GET
+def buy_item_intent(request, id: int):
+    item = get_object_or_404(Item, id=id)
+    try:
+        intent = create_payment_intent_for_item(item)
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except stripe.error.StripeError as e:
+        msg = getattr(e, "user_message", None) or str(e)
+        return JsonResponse({"error": msg}, status=400)
+    except Exception as e:
+        log.exception("Не удалось создать PaymentIntent для buy_item_intent(id=%s)", id)
+        return JsonResponse({"error": f"Неизвестная ошибка: {e}"}, status=500)
+
+    return JsonResponse({"client_secret": intent.client_secret})
+
+
+@require_GET
+def order_intent_page(request, order_id: int):
+    order = get_object_or_404(Order, id=order_id)
+    items = list(order.items.all())
+
+    # расчёты те же, что и на /order/
+    subtotal_cents = sum(i.price for i in items)
+    percent = order.discount.percent_off if (order.discount and order.discount.active) else 0
+    discount_cents = int(
+        (Decimal(subtotal_cents) * Decimal(percent) / Decimal(100))
+        .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
+    taxable_base_cents = subtotal_cents - discount_cents
+
+    taxes_ctx = []
+    exclusive_total_cents = 0
+    for t in order.taxes.filter(active=True):
+        rate = Decimal(t.percentage)
+        if t.inclusive:
+            tax_amount = (Decimal(taxable_base_cents) * rate / (Decimal(100) + rate)) \
+                         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            tax_amount = int(tax_amount)
+        else:
+            tax_amount = (Decimal(taxable_base_cents) * rate / Decimal(100)) \
+                         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            tax_amount = int(tax_amount)
+            exclusive_total_cents += tax_amount
+        taxes_ctx.append({
+            "name": t.display_name,
+            "rate": f"{t.percentage}",
+            "inclusive": t.inclusive,
+            "amount_cents": tax_amount,
+        })
+
+    total_cents = taxable_base_cents + exclusive_total_cents
+
+    def fmt(cents: int) -> str:
+        return f"{cents / 100:.2f}"
+
+    pubkey = _publishable_for_currency(order.currency)
+    context = {
+        "order": order,
+        "items": items,
+        "currency": order.currency.upper(),
+        "subtotal_display": fmt(subtotal_cents),
+        "has_discount": percent > 0,
+        "discount_name": order.discount.name if percent > 0 else "",
+        "discount_percent": percent,
+        "discount_amount_display": fmt(discount_cents),
+        "taxes": [
+            {"name": tx["name"], "rate": tx["rate"], "inclusive": tx["inclusive"],
+             "amount_display": fmt(tx["amount_cents"])}
+            for tx in taxes_ctx
+        ],
+        "has_taxes": bool(taxes_ctx),
+        "total_display": fmt(total_cents),
+        "STRIPE_PUBLISHABLE_KEY": pubkey,
+    }
+    return render(request, "order_intent.html", context)
+
+@require_GET
+def buy_order_intent(request, order_id: int):
+    order = get_object_or_404(Order, id=order_id)
+    if order.items.count() == 0:
+        return JsonResponse({"error": "Заказ пуст"}, status=400)
+    try:
+        intent = create_payment_intent_for_order(order)
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except stripe.error.StripeError as e:
+        msg = getattr(e, "user_message", None) or str(e)
+        return JsonResponse({"error": msg}, status=400)
+    except Exception as e:
+        log.exception("Не удалось создать PaymentIntent для buy_order_intent(order_id=%s)", order_id)
+        return JsonResponse({"error": f"Неизвестная ошибка: {e}"}, status=500)
+
+    return JsonResponse({"client_secret": intent.client_secret})

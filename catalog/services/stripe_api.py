@@ -164,3 +164,91 @@ def ensure_stripe_tax_rate(tax: Tax, api_key: str | None = None) -> str:
     tax.active = True
     tax.save(update_fields=["stripe_tax_rate_id", "active"])
     return txr.id
+
+# приблизительная сумма заказа (в центах): (subtotal - discount) + exclusive taxes
+# оценка нужна для валидации минимальной суммы и для amount в PaymentIntent
+def _estimate_order_total_cents(order) -> int:
+    items_qs = order.items.all()
+    subtotal = sum(int(i.price) for i in items_qs)
+
+    # скидка
+    d = getattr(order, "discount", None)
+    if d and getattr(d, "active", False):
+        off = int(
+            (Decimal(subtotal) * Decimal(int(d.percent_off)) / Decimal(100))
+            .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+    else:
+        off = 0
+
+    taxable_base = subtotal - off
+
+    # налоги сверху (exclusive)
+    exclusive_total = 0
+    for t in getattr(order, "taxes", []).filter(active=True):
+        if not t.inclusive:
+            tax_amount = (Decimal(taxable_base) * Decimal(t.percentage) / Decimal(100)) \
+                         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            exclusive_total += int(tax_amount)
+
+    total = taxable_base + exclusive_total
+    return max(0, int(total))
+
+# создаёт PaymentIntent для одиночного товара
+def create_payment_intent_for_item(item):
+    currency = (item.currency or "usd").lower()
+    secret = _secret_for_currency(currency)
+
+    amount = int(item.price)
+    min_needed = _min_charge_for_currency(currency)
+    if amount < min_needed:
+        raise ValueError(
+            f"Цена {amount/100:.2f} {currency.upper()} ниже минимальной суммы Stripe "
+            f"({min_needed/100:.2f} {currency.upper()})."
+        )
+
+    intent = stripe.PaymentIntent.create(
+        amount=amount,
+        currency=currency,
+        metadata={
+            "kind": "item",
+            "item_id": str(item.id),
+        },
+        # автоматический выбор доступных способов оплаты
+        automatic_payment_methods={"enabled": True},
+        api_key=secret,
+    )
+    return intent
+
+# создаёт PaymentIntent для заказа
+def create_payment_intent_for_order(order):
+    items_qs = order.items.all()
+    if not items_qs.exists():
+        raise ValueError("Заказ пуст")
+
+    currencies = {i.currency.lower() for i in items_qs}
+    if len(currencies) > 1:
+        raise ValueError("Смешанные валюты не поддерживаются в одном PaymentIntent")
+
+    currency = next(iter(currencies))
+    secret = _secret_for_currency(currency)
+
+    amount = _estimate_order_total_cents(order)
+    min_needed = _min_charge_for_currency(currency)
+    if amount < min_needed:
+        raise ValueError(
+            f"Сумма заказа {amount/100:.2f} {currency.upper()} ниже минимальной Stripe "
+            f"({min_needed/100:.2f} {currency.upper()}). Увеличьте цены или уменьшите скидку."
+        )
+
+    intent = stripe.PaymentIntent.create(
+        amount=amount,
+        currency=currency,
+        metadata={
+            "kind": "order",
+            "order_id": str(order.id),
+        },
+        automatic_payment_methods={"enabled": True},
+        api_key=secret,
+    )
+    return intent

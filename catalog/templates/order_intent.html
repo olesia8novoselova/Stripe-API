@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>Pay (Intent) — Order #{{ order.id }}</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Arial, sans-serif; padding: 32px; }
+      .card { max-width: 720px; border: 1px solid #eee; border-radius: 12px; padding: 24px; }
+      table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+      th, td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; text-align: left; }
+      .summary { margin-top: 12px; }
+      .row { display: flex; justify-content: space-between; padding: 4px 0; }
+      .total { font-weight: 700; font-size: 18px; }
+      #card-element { padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; }
+      button { margin-top: 16px; padding: 10px 16px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; }
+      .note { margin-top: 12px; color: #b00020; font-weight: 500; min-height: 1.2em; }
+      .ok { color: #0a7c2f; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Order #{{ order.id }}</h1>
+      <table>
+        <thead><tr><th>Name</th><th>Currency</th><th>Price</th></tr></thead>
+        <tbody>
+        {% for it in items %}
+          <tr><td>{{ it.name }}</td><td>{{ it.currency|upper }}</td><td>{{ it.display_price }}</td></tr>
+        {% empty %}
+          <tr><td colspan="3">No items</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="summary">
+        <div class="row"><span>Subtotal</span><span>{{ currency }} {{ subtotal_display }}</span></div>
+        {% if discount_percent %}
+          <div class="row"><span>Discount ({{ discount_name }} –{{ discount_percent }}%)</span><span>− {{ currency }} {{ discount_amount_display }}</span></div>
+        {% endif %}
+        {% if has_taxes %}
+          {% for tx in taxes %}
+            <div class="row"><span>Tax{% if tx.inclusive %} (incl.){% endif %} — {{ tx.name }} ({{ tx.rate }}%)</span><span>{{ currency }} {{ tx.amount_display }}</span></div>
+          {% endfor %}
+        {% endif %}
+        <div class="row total"><span>Total</span><span>{{ currency }} {{ total_display }}</span></div>
+      </div>
+
+      <div id="card-element"></div>
+      <button id="pay">Pay</button>
+      <div id="note" class="note"></div>
+    </div>
+
+    <script>
+      const stripe = Stripe("{{ STRIPE_PUBLISHABLE_KEY }}");
+      const elements = stripe.elements();
+      const card = elements.create('card');
+      card.mount('#card-element');
+
+      const note = document.getElementById('note');
+      const notify = (m, ok=false) => { note.textContent = m || ''; note.classList.toggle('ok', !!ok); };
+
+      async function fetchJSON(url) {
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch {}
+        return { res, data, text };
+      }
+
+      document.getElementById('pay').addEventListener('click', async () => {
+        notify('');
+        try {
+          const { res, data, text } = await fetchJSON("{% url 'buy-order-intent' order_id=order.id %}");
+          if (!res.ok) {
+            const msg = (data && data.error) || text || `HTTP ${res.status}`;
+            console.error('PI create error', msg);
+            notify(msg);
+            return;
+          }
+          const result = await stripe.confirmCardPayment(data.client_secret, { payment_method: { card } });
+          if (result.error) {
+            console.error('PI confirm error', result.error);
+            notify(result.error.message || 'Оплата не удалась');
+          } else if (result.paymentIntent && result.paymentIntent.status === 'succeeded') {
+            notify('Оплата прошла успешно!', true);
+          } else {
+            notify(`Status: ${result.paymentIntent && result.paymentIntent.status}`);
+          }
+        } catch (e) {
+          console.error(e);
+          notify(e.message || 'Неизвестная ошибка');
+        }
+      });
+    </script>
+  </body>
+</html>
