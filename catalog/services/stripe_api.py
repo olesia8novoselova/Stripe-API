@@ -59,7 +59,7 @@ def create_checkout_session_for_item(item):
     min_needed = _min_charge_for_currency(currency)
     if unit_amount < min_needed:
         raise ValueError(
-            f"Item price {unit_amount/100:.2f} {currency.upper()} меньше минимального "
+            f"Цена {unit_amount/100:.2f} {currency.upper()} меньше минимального "
             f"({min_needed/100:.2f} {currency.upper()})."
         )
 

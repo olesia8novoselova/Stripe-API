@@ -12,14 +12,39 @@ from .services.stripe_api import create_checkout_session_for_item, create_checko
 
 log = logging.getLogger(__name__)
 
+# возвращает publishable key под конкретную валюту
+# порядок поиска: settings.get_stripe_publishable_for(cur), settings.STRIPE_KEYS[cur]['publishable'], settings.STRIPE_PUBLISHABLE_KEY
+def _publishable_for_currency(currency: str) -> str:
+    cur = (currency or getattr(settings, "DEFAULT_CURRENCY", "usd")).lower()
+
+    # кастомный resolver из settings
+    if hasattr(settings, "get_stripe_publishable_for"):
+        try:
+            key = settings.get_stripe_publishable_for(cur)
+            if key:
+                return key
+        except Exception:
+            pass
+
+    keys = getattr(settings, "STRIPE_KEYS", None)
+    if isinstance(keys, dict):
+        pair = keys.get(cur) or keys.get(getattr(settings, "DEFAULT_CURRENCY", "usd"), {})
+        if isinstance(pair, dict) and pair.get("publishable"):
+            return pair["publishable"]
+
+    # fallback — один общий публичный ключ
+    return getattr(settings, "STRIPE_PUBLISHABLE_KEY", "")
+
 @require_GET
 def item_page(request, id: int):
     item = get_object_or_404(Item, id=id)
     display_price = item.price / 100
+    # ключ под валюту товара
+    pubkey = _publishable_for_currency(item.currency)
     return render(request, "item.html", {
         "item": item,
         "display_price": f"{display_price:.2f}",
-        "STRIPE_PUBLISHABLE_KEY": settings.STRIPE_PUBLISHABLE_KEY,
+        "STRIPE_PUBLISHABLE_KEY": pubkey,
     })
 
 @require_GET
@@ -88,6 +113,9 @@ def order_page(request, order_id: int):
     def fmt(cents: int) -> str:
         return f"{cents / 100:.2f}"
 
+    # ключ под валюту заказа
+    pubkey = _publishable_for_currency(order.currency)
+
     context = {
         "order": order,
         "items": items,
@@ -110,7 +138,7 @@ def order_page(request, order_id: int):
         "has_taxes": bool(taxes_ctx),
 
         "total_display": fmt(total_cents),
-        "STRIPE_PUBLISHABLE_KEY": settings.STRIPE_PUBLISHABLE_KEY,
+        "STRIPE_PUBLISHABLE_KEY": pubkey, 
     }
     return render(request, "order.html", context)
 
